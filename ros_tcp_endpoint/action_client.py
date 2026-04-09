@@ -62,17 +62,25 @@ class RosActionClient(RosSender):
         goal_msg = deserialize_message(
             goal_data, self.action_class.Goal)
 
-        if not self._action_client.wait_for_server(timeout_sec=2.0):
+        # wait_for_server needs the executor to spin so DDS discovery
+        # can proceed. We spin ourselves while waiting.
+        server_ready = False
+        for _ in range(100):  # 100 x 0.1s = 10s max
+            if self._action_client.server_is_ready():
+                server_ready = True
+                break
+            rclpy.spin_once(self, timeout_sec=0.1)
+
+        if not server_ready:
             self.get_logger().error(
-                f"Action server {self.action_name} not available")
+                f"Action server {self.action_name} not available "
+                f"(waited 10s — is the server running?)")
             return None
 
-        # send_goal is synchronous (blocks until accepted/rejected).
         future = self._action_client.send_goal_async(
             goal_msg,
             feedback_callback=self._on_feedback)
 
-        # Spin until the future completes.
         rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
         goal_handle = future.result()
         if goal_handle is None:
