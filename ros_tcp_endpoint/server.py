@@ -396,12 +396,20 @@ class SysCommands:
         """
         try:
             # Map flat suffixes to attribute paths inside Action.Impl.
+            # Longest suffixes first so "SendGoal_Request" is tried
+            # before "SendGoal".
             IMPL_MAP = {
                 "SendGoal_Request":  ["Impl", "SendGoalService", "Request"],
                 "SendGoal_Response": ["Impl", "SendGoalService", "Response"],
                 "GetResult_Request":  ["Impl", "GetResultService", "Request"],
                 "GetResult_Response": ["Impl", "GetResultService", "Response"],
                 "FeedbackMessage":   ["Impl", "FeedbackMessage"],
+                # Service-class lookups (no _Request/_Response suffix).
+                # ros_service resolves the service CLASS, then accesses
+                # .Request / .Response internally.  The service class
+                # itself lives at Action.Impl.{SendGoal,GetResult}Service.
+                "SendGoal":  ["Impl", "SendGoalService"],
+                "GetResult": ["Impl", "GetResultService"],
             }
             # Direct sub-class suffixes (no Impl nesting).
             DIRECT_MAP = {
