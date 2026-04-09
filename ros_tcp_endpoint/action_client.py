@@ -59,17 +59,22 @@ class RosActionClient(RosSender):
         Returns the CDR-serialized SendGoal_Response (accepted + stamp),
         or None on failure.
         """
+        import time
+
         goal_msg = deserialize_message(
             goal_data, self.action_class.Goal)
 
-        # wait_for_server needs the executor to spin so DDS discovery
-        # can proceed. We spin ourselves while waiting.
+        # The node is already added to the TcpServer's
+        # MultiThreadedExecutor, so DDS discovery proceeds on the
+        # executor thread. We just poll server_is_ready() here; do NOT
+        # call rclpy.spin_once(self) because the executor already owns
+        # this node and double-spinning causes deadlocks.
         server_ready = False
         for _ in range(100):  # 100 x 0.1s = 10s max
             if self._action_client.server_is_ready():
                 server_ready = True
                 break
-            rclpy.spin_once(self, timeout_sec=0.1)
+            time.sleep(0.1)
 
         if not server_ready:
             self.get_logger().error(
@@ -81,7 +86,12 @@ class RosActionClient(RosSender):
             goal_msg,
             feedback_callback=self._on_feedback)
 
-        rclpy.spin_until_future_complete(self, future, timeout_sec=10.0)
+        # Wait for the send_goal future. Again, the executor is
+        # spinning on another thread, so we just poll the future.
+        for _ in range(100):  # 10s max
+            if future.done():
+                break
+            time.sleep(0.1)
         goal_handle = future.result()
         if goal_handle is None:
             return None
@@ -119,8 +129,13 @@ class RosActionClient(RosSender):
                 f"get_result: no goal handle for UUID {key.hex()}")
             return None
 
+        import time
         result_future = goal_handle.get_result_async()
-        rclpy.spin_until_future_complete(self, result_future, timeout_sec=300.0)
+        # Poll instead of spin_until_future_complete — executor owns us.
+        for _ in range(3000):  # 300s max
+            if result_future.done():
+                break
+            time.sleep(0.1)
         result = result_future.result()
 
         # Clean up the handle.
@@ -155,8 +170,12 @@ class RosActionClient(RosSender):
                 f"cancel_goal: no goal handle for UUID {key.hex()}")
             return None
 
+        import time
         cancel_future = goal_handle.cancel_goal_async()
-        rclpy.spin_until_future_complete(self, cancel_future, timeout_sec=10.0)
+        for _ in range(100):  # 10s max
+            if cancel_future.done():
+                break
+            time.sleep(0.1)
         cancel_response = cancel_future.result()
 
         if cancel_response is None:
