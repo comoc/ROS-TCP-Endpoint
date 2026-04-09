@@ -30,6 +30,7 @@ from .subscriber import RosSubscriber
 from .publisher import RosPublisher
 from .service import RosService
 from .unity_service import UnityService
+from .action_client import RosActionClient
 
 
 class TcpServer(Node):
@@ -70,6 +71,9 @@ class TcpServer(Node):
         self.subscribers_table = {}
         self.ros_services_table = {}
         self.unity_services_table = {}
+        self.action_clients_table = {}
+        self.pending_action_op = None
+        self.pending_action_name = None
         self.buffer_size = buffer_size
         self.connections = connections
         self.syscommands = SysCommands(self)
@@ -305,6 +309,67 @@ class SysCommands:
             self.tcp_server.executor.add_node(new_service)
 
         self.tcp_server.loginfo("RegisterUnityService({}, {}) OK".format(topic, message_class))
+
+    def action_client(self, action_name, action_type):
+        """Register a RosActionClient that bridges to a real ROS2 action
+        server.  Unlike ``ros_service``, this creates an
+        ``rclpy.action.ActionClient`` which can discover DDS action
+        endpoints that plain ``create_client()`` cannot see.
+
+        The Godot client sends ``__action_client {action_name, action_type}``
+        once, then uses ``__action_send_goal``, ``__action_get_result``,
+        and ``__action_cancel_goal`` to interact with the server.
+        """
+        if action_name == "":
+            self.tcp_server.send_unity_error(
+                "RegisterActionClient - blank action name!")
+            return
+
+        # Resolve the Action class (e.g. example_interfaces.action.Fibonacci).
+        action_class = self.resolve_message_name(action_type, "action")
+        if action_class is None:
+            self.tcp_server.send_unity_error(
+                "RegisterActionClient({}, {}) - Unknown action class '{}'".format(
+                    action_name, action_type, action_type))
+            return
+
+        old_node = self.tcp_server.action_clients_table.get(action_name)
+        if old_node is not None:
+            self.tcp_server.unregister_node(old_node)
+
+        new_client = RosActionClient(action_name, action_class,
+                                     self.tcp_server.unity_tcp_sender)
+        self.tcp_server.action_clients_table[action_name] = new_client
+        if self.tcp_server.executor is not None:
+            self.tcp_server.executor.add_node(new_client)
+
+        self.tcp_server.loginfo(
+            "RegisterActionClient({}, {}) OK".format(action_name, action_class))
+
+    def action_send_goal(self, action_name, srv_id):
+        """The next frame carries the CDR-serialized Goal body.  We set
+        pending_srv_id so the client thread routes the next payload to
+        our action_client.send_goal, and sends the response back via
+        the normal __response{srv_id} mechanism.
+        """
+        self.tcp_server.pending_srv_id = srv_id
+        self.tcp_server.pending_srv_is_request = True
+        self.tcp_server.pending_action_name = action_name
+        self.tcp_server.pending_action_op = "send_goal"
+
+    def action_get_result(self, action_name, srv_id):
+        """The next frame carries GetResult_Request (just a UUID)."""
+        self.tcp_server.pending_srv_id = srv_id
+        self.tcp_server.pending_srv_is_request = True
+        self.tcp_server.pending_action_name = action_name
+        self.tcp_server.pending_action_op = "get_result"
+
+    def action_cancel_goal(self, action_name, srv_id):
+        """The next frame carries CancelGoal_Request."""
+        self.tcp_server.pending_srv_id = srv_id
+        self.tcp_server.pending_srv_is_request = True
+        self.tcp_server.pending_action_name = action_name
+        self.tcp_server.pending_action_op = "cancel_goal"
 
     def response(self, srv_id):  # the next message is a service response
         self.tcp_server.pending_srv_id = srv_id

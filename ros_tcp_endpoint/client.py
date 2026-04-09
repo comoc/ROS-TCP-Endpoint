@@ -159,6 +159,54 @@ class ClientThread(threading.Thread):
             service_thread.daemon = True
             service_thread.start()
 
+    def handle_action_request(self, srv_id, action_name, op, data):
+        """Route an action operation to the RosActionClient."""
+        client = self.tcp_server.action_clients_table.get(action_name)
+        if client is None:
+            error_msg = "Action client '{}' is not registered!".format(action_name)
+            self.tcp_server.send_unity_error(error_msg)
+            self.tcp_server.logerr(error_msg)
+            return
+
+        # Run in a thread to avoid blocking the read loop (action calls
+        # can take seconds to minutes).
+        t = threading.Thread(
+            target=self._action_call_thread,
+            args=(srv_id, action_name, op, data, client),
+            daemon=True)
+        t.start()
+
+    def _action_call_thread(self, srv_id, action_name, op, data, client):
+        """Execute the action operation and send the response back."""
+        response_data = None
+        try:
+            if op == "send_goal":
+                response_data = client.send_goal(data)
+            elif op == "get_result":
+                response_data = client.get_result(data)
+            elif op == "cancel_goal":
+                response_data = client.cancel_goal(data)
+            else:
+                self.tcp_server.logerr(
+                    "Unknown action op '{}' for '{}'".format(op, action_name))
+                return
+        except Exception as e:
+            self.tcp_server.logerr(
+                "Action {} {} failed: {}".format(action_name, op, e))
+            return
+
+        if response_data is None:
+            error_msg = "No response from action {} {}".format(action_name, op)
+            self.tcp_server.send_unity_error(error_msg)
+            self.tcp_server.logerr(error_msg)
+            return
+
+        # Send the CDR-serialized response back to Godot using the
+        # normal service-response mechanism (the same __response{srv_id}
+        # + payload pair that regular services use).
+        self.tcp_server.unity_tcp_sender.send_ros_service_response(
+            srv_id, action_name, response_data)
+
     def service_call_thread(self, srv_id, destination, data, ros_communicator):
         response = ros_communicator.send(data)
 
@@ -195,16 +243,20 @@ class ClientThread(threading.Thread):
 
                 # Process this message that was sent from Unity
                 if self.tcp_server.pending_srv_id is not None:
-                    # if we've been told that the next message will be a service request/response, process it as such
-                    if self.tcp_server.pending_srv_is_request:
-                        self.send_ros_service_request(
-                            self.tcp_server.pending_srv_id, destination, data
-                        )
-                    else:
-                        self.tcp_server.send_unity_service_response(
-                            self.tcp_server.pending_srv_id, data
-                        )
+                    srv_id = self.tcp_server.pending_srv_id
                     self.tcp_server.pending_srv_id = None
+
+                    # Check if this is an action request.
+                    action_op = getattr(self.tcp_server, "pending_action_op", None)
+                    action_name = getattr(self.tcp_server, "pending_action_name", None)
+                    if action_op is not None:
+                        self.tcp_server.pending_action_op = None
+                        self.tcp_server.pending_action_name = None
+                        self.handle_action_request(srv_id, action_name, action_op, data)
+                    elif self.tcp_server.pending_srv_is_request:
+                        self.send_ros_service_request(srv_id, destination, data)
+                    else:
+                        self.tcp_server.send_unity_service_response(srv_id, data)
                 elif destination == "":
                     # ignore this keepalive message, listen for more
                     pass
