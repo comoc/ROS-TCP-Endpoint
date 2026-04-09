@@ -318,6 +318,31 @@ class SysCommands:
         self.tcp_server.unity_tcp_sender.send_topic_list()
 
     def resolve_message_name(self, name, extension="msg"):
+        """Resolve a ROS message/service/action class by name.
+
+        Tries the given extension first (e.g. "msg" or "srv"), then
+        falls back to "action" if the primary lookup fails. This lets
+        clients register Action-generated types (e.g.
+        ``Fibonacci_SendGoal``) via the normal ``__ros_service`` /
+        ``__subscribe`` syscommands without any protocol changes.
+        """
+        result = self._try_resolve_message_name(name, extension)
+        if result is None and extension != "action":
+            result = self._try_resolve_message_name(name, "action")
+        if result is None:
+            self.tcp_server.logerr(
+                "Failed to resolve message name '{}' in extensions '{}' and 'action'".format(
+                    name, extension
+                )
+            )
+        return result
+
+    def _try_resolve_message_name(self, name, extension):
+        """Attempt to import *name* from the *extension* sub-module.
+
+        Returns the class on success, or ``None`` on any failure
+        (without logging — the caller decides whether to report).
+        """
         try:
             names = name.split("/")
             module_name = names[0]
@@ -325,18 +350,11 @@ class SysCommands:
             importlib.import_module(module_name + "." + extension)
             module = sys.modules[module_name]
             if module is None:
-                self.tcp_server.logerr("Failed to resolve module {}".format(module_name))
-            module = getattr(module, extension)
+                return None
+            module = getattr(module, extension, None)
             if module is None:
-                self.tcp_server.logerr(
-                    "Failed to resolve module {}.{}".format(module_name, extension)
-                )
-            module = getattr(module, class_name)
-            if module is None:
-                self.tcp_server.logerr(
-                    "Failed to resolve module {}.{}.{}".format(module_name, extension, class_name)
-                )
-            return module
-        except (IndexError, KeyError, AttributeError, ImportError) as e:
-            self.tcp_server.logerr("Failed to resolve message name: {}".format(e))
+                return None
+            cls = getattr(module, class_name, None)
+            return cls
+        except (IndexError, KeyError, AttributeError, ImportError):
             return None
