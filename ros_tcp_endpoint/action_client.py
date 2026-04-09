@@ -82,9 +82,12 @@ class RosActionClient(RosSender):
                 f"(waited 10s — is the server running?)")
             return None
 
-        future = self._action_client.send_goal_async(
-            goal_msg,
-            feedback_callback=self._on_feedback)
+        # Do NOT pass feedback_callback here. Godot subscribes to the
+        # feedback topic via __subscribe, which creates a RosSubscriber
+        # that forwards feedback through the normal topic path. If we
+        # ALSO forwarded feedback from _on_feedback, every feedback
+        # would arrive twice on the Godot side.
+        future = self._action_client.send_goal_async(goal_msg)
 
         # Wait for the send_goal future. Again, the executor is
         # spinning on another thread, so we just poll the future.
@@ -184,19 +187,6 @@ class RosActionClient(RosSender):
         if cancel_response is None:
             return None
         return serialize_message(cancel_response)
-
-    def _on_feedback(self, feedback_msg):
-        """Called by rclpy when the action server publishes feedback.
-
-        Forward it to Godot over the TCP connection as a regular
-        topic message on ``<action>/_action/feedback``.
-        """
-        # feedback_msg is the full FeedbackMessage wrapper (goal_id +
-        # feedback body). Godot's subscriber expects the full wrapper
-        # so it can match goal_id to the right GoalHandle.
-        self.tcp_server.send_unity_message(
-            self.action_name + "/_action/feedback",
-            feedback_msg)
 
     def unregister(self):
         self._action_client.destroy()
