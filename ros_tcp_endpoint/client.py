@@ -201,10 +201,10 @@ class ClientThread(threading.Thread):
             self.tcp_server.logerr(error_msg)
             return
 
-        # Send the CDR-serialized response back to Godot using the
-        # normal service-response mechanism (the same __response{srv_id}
-        # + payload pair that regular services use).
-        self.tcp_server.unity_tcp_sender.send_ros_service_response(
+        # Send the CDR-serialized response back to Godot. Use the _raw
+        # variant because response_data is already CDR bytes (the
+        # RosActionClient does its own serialize_message internally).
+        self.tcp_server.unity_tcp_sender.send_ros_service_response_raw(
             srv_id, action_name, response_data)
 
     def service_call_thread(self, srv_id, destination, data, ros_communicator):

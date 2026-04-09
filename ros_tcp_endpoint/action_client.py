@@ -188,11 +188,12 @@ class RosActionClient(RosSender):
         Forward it to Godot over the TCP connection as a regular
         topic message on ``<action>/_action/feedback``.
         """
-        # feedback_msg is Fibonacci.Impl.FeedbackMessage (the full wrapper
-        # including goal_id). Serialize and send to Godot.
+        # feedback_msg is the full FeedbackMessage wrapper (goal_id +
+        # feedback body). Godot's subscriber expects the full wrapper
+        # so it can match goal_id to the right GoalHandle.
         self.tcp_server.send_unity_message(
             self.action_name + "/_action/feedback",
-            feedback_msg.feedback)
+            feedback_msg)
 
     def unregister(self):
         self._action_client.destroy()
