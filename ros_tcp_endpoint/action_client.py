@@ -97,19 +97,22 @@ class RosActionClient(RosSender):
             return None
 
         # Build a SendGoal_Response to send back to Godot.
+        # rclpy's ActionClient generates its own UUID for the goal
+        # (ignoring any UUID we might have set), so we need to tell
+        # Godot which UUID was actually used. We prepend the 16-byte
+        # UUID to the CDR-serialized SendGoal_Response; Godot strips
+        # the first 16 bytes before deserializing.
         response_class = self.action_class.Impl.SendGoalService.Response
         resp = response_class()
         resp.accepted = goal_handle.accepted
         resp.stamp = goal_handle.stamp if hasattr(goal_handle, 'stamp') else resp.stamp
 
+        goal_uuid = bytes(goal_handle.goal_id.uuid)
         if goal_handle.accepted:
-            # Extract the 16-byte goal UUID from the goal_handle.
-            goal_uuid = goal_handle.goal_id.uuid
-            key = bytes(goal_uuid)
             with self._goal_handles_lock:
-                self._goal_handles[key] = goal_handle
+                self._goal_handles[goal_uuid] = goal_handle
 
-        return serialize_message(resp)
+        return goal_uuid + serialize_message(resp)
 
     def get_result(self, goal_id_data):
         """Request the result for a goal. *goal_id_data* is CDR-serialized
