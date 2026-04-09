@@ -31,6 +31,7 @@ from .publisher import RosPublisher
 from .service import RosService
 from .unity_service import UnityService
 from .action_client import RosActionClient
+from .action_server import RosActionServer
 
 
 class TcpServer(Node):
@@ -72,8 +73,10 @@ class TcpServer(Node):
         self.ros_services_table = {}
         self.unity_services_table = {}
         self.action_clients_table = {}
+        self.action_servers_table = {}
         self.pending_action_op = None
         self.pending_action_name = None
+        self.pending_action_goal_uuid = None
         self.buffer_size = buffer_size
         self.connections = connections
         self.syscommands = SysCommands(self)
@@ -370,6 +373,50 @@ class SysCommands:
         self.tcp_server.pending_srv_is_request = True
         self.tcp_server.pending_action_name = action_name
         self.tcp_server.pending_action_op = "cancel_goal"
+
+    def action_server(self, action_name, action_type):
+        """Register a RosActionServer so Godot can implement an action.
+
+        When a ROS 2 action client sends a goal, the endpoint forwards
+        it to Godot as a __request/__response pair. Godot processes the
+        goal and sends feedback via __action_publish_feedback and the
+        result via __response.
+        """
+        if action_name == "":
+            self.tcp_server.send_unity_error(
+                "RegisterActionServer - blank action name!")
+            return
+
+        action_class = self.resolve_message_name(action_type, "action")
+        if action_class is None:
+            self.tcp_server.send_unity_error(
+                "RegisterActionServer({}, {}) - Unknown action class".format(
+                    action_name, action_type))
+            return
+
+        old_node = self.tcp_server.action_servers_table.get(action_name)
+        if old_node is not None:
+            self.tcp_server.unregister_node(old_node)
+
+        new_server = RosActionServer(action_name, action_class,
+                                     self.tcp_server)
+        self.tcp_server.action_servers_table[action_name] = new_server
+        if self.tcp_server.executor is not None:
+            self.tcp_server.executor.add_node(new_server)
+
+        self.tcp_server.loginfo(
+            "RegisterActionServer({}, {}) OK".format(action_name, action_class))
+
+    def action_publish_feedback(self, action_name, goal_uuid_hex):
+        """The next frame carries CDR-serialized Feedback body.
+
+        We set pending state so the client thread routes the next
+        payload to the matching RosActionServer.publish_feedback().
+        """
+        self.tcp_server.pending_srv_id = None  # not a srv_id response
+        self.tcp_server.pending_action_name = action_name
+        self.tcp_server.pending_action_op = "publish_feedback"
+        self.tcp_server.pending_action_goal_uuid = goal_uuid_hex
 
     def response(self, srv_id):  # the next message is a service response
         self.tcp_server.pending_srv_id = srv_id

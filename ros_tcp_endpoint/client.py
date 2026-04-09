@@ -207,6 +207,16 @@ class ClientThread(threading.Thread):
         self.tcp_server.unity_tcp_sender.send_ros_service_response_raw(
             srv_id, action_name, response_data)
 
+    def _handle_action_feedback(self, action_name, goal_uuid_hex, data):
+        """Route feedback CDR bytes to the matching RosActionServer."""
+        server = self.tcp_server.action_servers_table.get(action_name)
+        if server is None:
+            self.tcp_server.logerr(
+                "Action server '{}' not registered for feedback".format(action_name))
+            return
+        goal_uuid = bytes.fromhex(goal_uuid_hex)
+        server.publish_feedback(goal_uuid, data)
+
     def service_call_thread(self, srv_id, destination, data, ros_communicator):
         response = ros_communicator.send(data)
 
@@ -241,18 +251,28 @@ class ClientThread(threading.Thread):
             while not halt_event.is_set():
                 destination, data = self.read_message(self.conn)
 
-                # Process this message that was sent from Unity
-                if self.tcp_server.pending_srv_id is not None:
+                # Process this message that was sent from Unity.
+
+                # Check for pending action feedback (no srv_id involved).
+                action_op = getattr(self.tcp_server, "pending_action_op", None)
+                if action_op == "publish_feedback":
+                    action_name = self.tcp_server.pending_action_name
+                    goal_uuid_hex = getattr(self.tcp_server, "pending_action_goal_uuid", "")
+                    self.tcp_server.pending_action_op = None
+                    self.tcp_server.pending_action_name = None
+                    self.tcp_server.pending_action_goal_uuid = None
+                    self._handle_action_feedback(action_name, goal_uuid_hex, data)
+                elif self.tcp_server.pending_srv_id is not None:
                     srv_id = self.tcp_server.pending_srv_id
                     self.tcp_server.pending_srv_id = None
 
-                    # Check if this is an action request.
-                    action_op = getattr(self.tcp_server, "pending_action_op", None)
-                    action_name = getattr(self.tcp_server, "pending_action_name", None)
-                    if action_op is not None:
+                    # Check if this is an action client request.
+                    action_op2 = getattr(self.tcp_server, "pending_action_op", None)
+                    action_name2 = getattr(self.tcp_server, "pending_action_name", None)
+                    if action_op2 is not None:
                         self.tcp_server.pending_action_op = None
                         self.tcp_server.pending_action_name = None
-                        self.handle_action_request(srv_id, action_name, action_op, data)
+                        self.handle_action_request(srv_id, action_name2, action_op2, data)
                     elif self.tcp_server.pending_srv_is_request:
                         self.send_ros_service_request(srv_id, destination, data)
                     else:
