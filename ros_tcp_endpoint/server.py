@@ -342,6 +342,14 @@ class SysCommands:
 
         Returns the class on success, or ``None`` on any failure
         (without logging — the caller decides whether to report).
+
+        For the ``"action"`` extension, rclpy exposes Action sub-types
+        as nested classes rather than flat module attributes.  For
+        example, ``example_interfaces/Fibonacci_SendGoal_Request`` maps
+        to ``example_interfaces.action.Fibonacci.Impl.SendGoalService.Request``.
+        This method handles the translation automatically so that
+        clients can use the flat ``Package/Action_Suffix`` naming
+        convention over the wire.
         """
         try:
             names = name.split("/")
@@ -354,7 +362,73 @@ class SysCommands:
             module = getattr(module, extension, None)
             if module is None:
                 return None
+
+            # For msg/srv the class sits directly on the sub-module.
             cls = getattr(module, class_name, None)
+            if cls is not None:
+                return cls
+
+            # For action types, try the nested-class lookup.
+            if extension == "action":
+                cls = self._try_resolve_action_class(module, class_name)
             return cls
         except (IndexError, KeyError, AttributeError, ImportError):
+            return None
+
+    @staticmethod
+    def _try_resolve_action_class(action_module, class_name):
+        """Resolve an Action sub-type from its flat wire name.
+
+        rclpy generates Action classes with this nesting structure::
+
+            <ActionModule>.<Action>.Goal
+            <ActionModule>.<Action>.Result
+            <ActionModule>.<Action>.Feedback
+            <ActionModule>.<Action>.Impl.SendGoalService.Request
+            <ActionModule>.<Action>.Impl.SendGoalService.Response
+            <ActionModule>.<Action>.Impl.GetResultService.Request
+            <ActionModule>.<Action>.Impl.GetResultService.Response
+            <ActionModule>.<Action>.Impl.FeedbackMessage
+
+        On the wire the client sends a flat name like
+        ``Fibonacci_SendGoal_Request``.  We split on ``_`` to recover
+        the Action name and the suffix, then walk the nested attrs.
+        """
+        try:
+            # Map flat suffixes to attribute paths inside Action.Impl.
+            IMPL_MAP = {
+                "SendGoal_Request":  ["Impl", "SendGoalService", "Request"],
+                "SendGoal_Response": ["Impl", "SendGoalService", "Response"],
+                "GetResult_Request":  ["Impl", "GetResultService", "Request"],
+                "GetResult_Response": ["Impl", "GetResultService", "Response"],
+                "FeedbackMessage":   ["Impl", "FeedbackMessage"],
+            }
+            # Direct sub-class suffixes (no Impl nesting).
+            DIRECT_MAP = {
+                "Goal": "Goal",
+                "Result": "Result",
+                "Feedback": "Feedback",
+            }
+
+            # Try each known suffix, longest first so that
+            # "SendGoal_Request" matches before "Goal".
+            for suffix, path in IMPL_MAP.items():
+                if class_name.endswith("_" + suffix):
+                    action_name = class_name[: -(len(suffix) + 1)]
+                    obj = getattr(action_module, action_name, None)
+                    for attr in path:
+                        if obj is None:
+                            break
+                        obj = getattr(obj, attr, None)
+                    return obj
+
+            for suffix, attr in DIRECT_MAP.items():
+                if class_name.endswith("_" + suffix):
+                    action_name = class_name[: -(len(suffix) + 1)]
+                    obj = getattr(action_module, action_name, None)
+                    if obj is not None:
+                        return getattr(obj, attr, None)
+
+            return None
+        except (AttributeError, TypeError):
             return None
