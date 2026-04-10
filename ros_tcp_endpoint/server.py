@@ -437,7 +437,17 @@ class SysCommands:
         clients register Action-generated types (e.g.
         ``Fibonacci_SendGoal``) via the normal ``__ros_service`` /
         ``__subscribe`` syscommands without any protocol changes.
+
+        Also handles 3-segment names like
+        ``package/action/ClassName`` (which __topic_list may report)
+        by extracting the middle segment as the extension.
         """
+        # Handle 3-segment names: "pkg/msg/Type" or "pkg/action/Type"
+        parts = name.split("/")
+        if len(parts) == 3 and parts[1] in ("msg", "srv", "action"):
+            name = parts[0] + "/" + parts[2]
+            extension = parts[1]
+
         result = self._try_resolve_message_name(name, extension)
         if result is None and extension != "action":
             result = self._try_resolve_message_name(name, "action")
