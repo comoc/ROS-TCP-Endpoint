@@ -28,7 +28,6 @@ CDR payloads.
 import re
 import threading
 
-import rclpy
 from rclpy.action import ActionClient
 from rclpy.serialization import deserialize_message, serialize_message
 
@@ -95,6 +94,13 @@ class RosActionClient(RosSender):
             if future.done():
                 break
             time.sleep(0.1)
+
+        if not future.done():
+            self.get_logger().error(
+                f"send_goal: timed out waiting for goal response from "
+                f"{self.action_name}")
+            return None
+
         goal_handle = future.result()
         if goal_handle is None:
             return None
@@ -142,6 +148,14 @@ class RosActionClient(RosSender):
             if result_future.done():
                 break
             time.sleep(0.1)
+
+        if not result_future.done():
+            self.get_logger().error(
+                f"get_result: timed out waiting for result for UUID {key.hex()}")
+            with self._goal_handles_lock:
+                self._goal_handles.pop(key, None)
+            return None
+
         result = result_future.result()
 
         # Clean up the handle.
@@ -182,6 +196,12 @@ class RosActionClient(RosSender):
             if cancel_future.done():
                 break
             time.sleep(0.1)
+
+        if not cancel_future.done():
+            self.get_logger().error(
+                f"cancel_goal: timed out waiting for cancel response for UUID {key.hex()}")
+            return None
+
         cancel_response = cancel_future.result()
 
         if cancel_response is None:

@@ -214,7 +214,21 @@ class ClientThread(threading.Thread):
             self.tcp_server.logerr(
                 "Action server '{}' not registered for feedback".format(action_name))
             return
-        goal_uuid = bytes.fromhex(goal_uuid_hex)
+
+        normalized_goal_uuid_hex = goal_uuid_hex.strip().replace("-", "")
+        if len(normalized_goal_uuid_hex) != 32:
+            self.tcp_server.logerr(
+                "Invalid goal UUID '{}' for action feedback '{}': "
+                "expected 32 hex characters".format(goal_uuid_hex, action_name))
+            return
+
+        try:
+            goal_uuid = bytes.fromhex(normalized_goal_uuid_hex)
+        except ValueError:
+            self.tcp_server.logerr(
+                "Invalid goal UUID '{}' for action feedback '{}': "
+                "not valid hexadecimal".format(goal_uuid_hex, action_name))
+            return
         server.publish_feedback(goal_uuid, data)
 
     def service_call_thread(self, srv_id, destination, data, ros_communicator):

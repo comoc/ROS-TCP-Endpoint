@@ -155,6 +155,8 @@ class TcpServer(Node):
             + len(self.subscribers_table.keys())
             + len(self.ros_services_table.keys())
             + len(self.unity_services_table.keys())
+            + len(self.action_clients_table.keys())
+            + len(self.action_servers_table.keys())
             + 1
         )
         executor = MultiThreadedExecutor(num_threads)
@@ -168,6 +170,10 @@ class TcpServer(Node):
         for ros_node in self.ros_services_table.values():
             executor.add_node(ros_node)
         for ros_node in self.unity_services_table.values():
+            executor.add_node(ros_node)
+        for ros_node in self.action_clients_table.values():
+            executor.add_node(ros_node)
+        for ros_node in self.action_servers_table.values():
             executor.add_node(ros_node)
 
         self.executor = executor
@@ -190,6 +196,10 @@ class TcpServer(Node):
         for ros_node in self.ros_services_table.values():
             ros_node.destroy_node()
         for ros_node in self.unity_services_table.values():
+            ros_node.destroy_node()
+        for ros_node in self.action_clients_table.values():
+            ros_node.destroy_node()
+        for ros_node in self.action_servers_table.values():
             ros_node.destroy_node()
 
         self.destroy_node()
@@ -341,7 +351,7 @@ class SysCommands:
             self.tcp_server.unregister_node(old_node)
 
         new_client = RosActionClient(action_name, action_class,
-                                     self.tcp_server.unity_tcp_sender)
+                                     self.tcp_server)
         self.tcp_server.action_clients_table[action_name] = new_client
         if self.tcp_server.executor is not None:
             self.tcp_server.executor.add_node(new_client)

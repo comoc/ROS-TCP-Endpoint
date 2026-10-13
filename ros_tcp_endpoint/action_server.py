@@ -25,7 +25,6 @@ __action_publish_feedback syscommand.
 
 import re
 import threading
-import time
 
 from rclpy.action import ActionServer, CancelResponse, GoalResponse
 from rclpy.serialization import deserialize_message, serialize_message
@@ -71,7 +70,7 @@ class RosActionServer(RosSender):
         # Send the goal to the client using the __request / __response
         # mechanism. send_unity_service_request blocks until the client
         # responds. We use the action_name as the topic/destination
-        # so the client.s action server can route it.
+        # so the client's action server can route it.
         #
         # BUT: send_unity_service_request calls deserialize_message
         # on the response, which needs a rclpy type. We need raw CDR
